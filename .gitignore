@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+backend/venv/
+backend/stt-venv/
+
+# Env
+backend/.env
+.env
+.env.local
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Data
+backend/data/demo_frames/
+data/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Local logs
+*.log
+nohup.out

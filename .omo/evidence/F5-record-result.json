@@ -1,0 +1,19 @@
+{
+  "ready": {},
+  "narration": {
+    "samples": [
+      "normal_driving",
+      "pedestrian_warning"
+    ],
+    "distinct_count": 2
+  },
+  "qwen_scene": {},
+  "timer": {
+    "timerReached": 90,
+    "reached_90s": true,
+    "auto_stopped": true,
+    "destination_shown": true
+  },
+  "errors": [],
+  "video_path": "/Users/robotjang/fsd-web-demo/.omo/evidence/video_canon/page@6753e71e8ced015b6a23f9070e3693fc.webm"
+}

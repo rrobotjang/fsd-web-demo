@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+onnxruntime
+opencv-python-headless
+websockets
+pydantic
+python-dotenv
+numpy
+Pillow

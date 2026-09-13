@@ -1,0 +1,74 @@
+F3 Runtime QA Report
+====================
+Plan: /Users/robotjang/.omo/plans/fsd-web-demo.md
+Date: 2026-09-12 17:57 KST
+Method: Standalone Playwright (headless chromium) driver against live servers.
+  Driver: .omo/evidence/F3-driver3.js (v4, Node-side polling for 90s wait)
+  Backend: uvicorn main:app on :8000 (backend/.venv)
+  Frontend: vite dev on :5173
+  Evidence artifacts in this directory:
+    - F3-qa-recording.mp4          (92.5s full-demo screen recording, 5.9MB)  [plan-witness evidence]
+    - F3-shot-00-initial.png       (demo not started)
+    - F3-shot-01-streaming.png     (canvas streaming live)
+    - F3-shot-02-payments.png      (payment records rendering)
+    - F3-shot-03-complete.png      (90s complete: Destination phase + auto-stop)
+    - F3-driver3-result.json       (machine-readable per-item results)
+
+RESULTS
+-------
+qa1  KITTI REST inference........ PASS
+     POST /api/detect  on backend/data/demo_frames/um_000000.png
+       -> 200, 1 detection (class=person)          (matches known KITTI frame content)
+     POST /api/lane    on same frame
+       -> 200, 1 lane
+qa2  Live streaming + narration.. PASS
+     canvas first non-black frame in 4-5ms of clicking Start
+     narration panel updated: Situation: + non-waiting text
+qa3  Payment lifecycle........... PASS
+     per-scenario before/after deltas against /api/payment/history:
+       Toll Gate   0 -> 1
+       Parking     1 -> 2
+       Fuel Station 2 -> 3
+     total 3 records persisted; scenario labels correctly routed
+qa3b WS frame-rate probe......... SEE NOTE
+     6-13 frames received over ~6s; avg interval 457-758ms
+     observed throughput ~1.3-2.2 fps  (vs. 30fps plan success criterion -> UNMET)
+     root cause: backend/routers/ws_stream.py STREAM_INTERVAL = 0.25s (flow by design)
+qa4  Full 90s + auto-stop........ PASS
+     timer reached 90s, Start button re-appeared (auto-stop), Destination phase shown
+
+NOTES / FINDINGS
+----------------
+N1  Qwen/vLLM narration is MOCK-BY-DEFAULT, not real Qwen.
+    get_bridge() returns a ColabQwenBridge whenever /opt/anaconda3/envs/venv/bin/colab
+    exists (it does), but the Colab session "lora-train" is NOT running:
+      colab ls -> "No active sessions found"; bridge.health_check() -> False
+    => /api/qwen and /ws/stream narration return the placeholder
+       "Vision narrator: connecting to Colab vLLM daemon..." forever.
+    qa2 "narration updated" therefore only proves the PLACEHOLDER rendered and the
+    "Waiting for AI analysis" state cleared - it does NOT prove real Qwen output.
+    Related bug: ws_stream.py:44 and qwen.py:16 do `get_bridge() or MockQwenInference()`;
+    get_bridge() is truthy even when the daemon is down, so the mock path is never
+    taken -> placeholder narration instead of mock narration.
+    Fix options: (a) run the Colab session + vLLM daemon (colab/start_vllm_daemon.sh),
+    (b) make get_bridge() return None when health_check() fails -> then mock fallback
+    narrates realistically.
+
+N2  ws.py:36-37 `finally: await websocket.close()` raises
+    RuntimeError('Cannot call "send" once a close message has been sent.') when the
+    client disconnects first (observed in /tmp/fsd-backend.log for the WS probe).
+    Endpoint still completes; error is logged by uvicorn, not swallowed (cf. silent
+    swallow at ws.py:34 except Exception: pass). Recommended guard:
+    try-block close. Minor.
+
+N3  ws_error observed in driver probe (page-side): a single WS error event on the
+    Node WebSocket client after the frontend demo WS and probe WS both close.
+    No impact on demo; consistent with N2 server-side close race.
+
+N4  fps finding reinforces F2 CQ-07: demo stream is ~1.3-2.2fps, not 30fps.
+    Plan's 30fps success criterion requires STREAM_INTERVAL <= 0.033s (and/or async
+    inference decoupling). Not a regression; design constant.
+
+VERDICT: F3 QA PASS (4/4 core items). Video evidence produced.
+  One capability gap documented (N1: Qwen fallback) - functional for demo, not real AI narration.
+  One performance criterion unmet (qa3b: 30fps vs ~2fps) - pre-existing design constant.

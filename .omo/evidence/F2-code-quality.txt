@@ -1,0 +1,79 @@
+F2 CODE QUALITY REVIEW — fsd-web-demo
+======================================
+Date: 2026-09-12
+Scope: backend/ (Python/FastAPI) + frontend/ (React/TS) — project code only
+       (backend/venv, frontend/node_modules excluded)
+
+VERIFICATION BATTERY (all executed, all results below)
+-------------------------------------------------------
+[VB-01] frontend build : `npm run build` (tsc && vite build) → EXIT 0, 32 modules, ✓
+[VB-02] TS strict check : `npx tsc --noEmit` → EXIT 0 (tsconfig: strict, noUnusedLocals,
+        noUnusedParameters, noFallthroughCasesInSwitch) ✓
+[VB-03] Python syntax : `python3 -m py_compile` on all 15 backend .py files (excl venv)
+        → EXIT 0, 15/15 OK ✓
+[VB-04] Type-unsafety grep : `@ts-ignore|@ts-expect-error|as any|: any` in frontend/src
+        → 0 matches ✓
+[VB-05] Debug/TODO grep : `except:|pass$|print(|TODO|FIXME` in backend (excl venv, __pycache__)
+        → 0 matches in project code (only hits were template-strings inside
+        colab_qwen_bridge.py payloads — remote code, not debugging).
+
+FINDINGS
+--------
+CQ-01 [MAJOR · misleading success] Broad `except Exception` in all REST routers
+  (detection.py:51, lane.py:42, qwen.py:41) returns HTTP 200 with the error message
+  embedded in the JSON body (e.g. via Pydantic validation errors). Clients cannot
+  distinguish failure from success by status code; the frontend never surfaces these
+  errors. RECOMMEND: raise HTTPException(400/500) and let FastAPI handlers return 4xx/5xx.
+CQ-02 [MAJOR · silent error swallowing] routers/ws.py:34 `except Exception: pass` then
+  close — every stream error (client drop, decode failure, model crash) is silently
+  discarded with zero logging. IMPACT: F3 "-- 연결 해제 시 정리 처리" QA can pass by luck,
+  but diagnosing stream failures requires re-instrumentation. RECOMMEND: log exception
+  (import logging; logger.exception) before close.
+CQ-03 [MAJOR · no test suite] Despite Verification strategy "tests-after + Jest (FE),
+  pytest (BE)", ZERO test files exist in the repo (no *.test.tsx, no tests/, no
+  test_*.py in backend). Quality is currently enforced only by build+typecheck+manual QA.
+CQ-04 [MAJOR · hardcoded service URLs in FE] Dashboard.tsx hardcodes
+  `ws://localhost:8000/ws/stream` and `http://localhost:8000/api/payment`.
+  .env.example declares VITE_WS_URL / VITE_API_URL but NO frontend code reads them
+  (Vite exposed envs are unused). Breaks the documented env-template contract and any
+  non-default deployment (different host/port → silently broken demo).
+CQ-05 [MINOR · dead code] hooks/useWebSocket.ts (55 lines) is unused — Dashboard
+  implements an inline WebSocket. Duplicate connection logic (two impls of the same
+  contract) → maintenance hazard.
+CQ-06 [MINOR · mock determinism] MockDetector.predict re-seeds `np.random.seed(42)`
+  inside the call → EVERY frame yields the identical pseudo-random detection set. Mock
+  mode cannot demonstrate frame-to-frame variation (fine for demo; misleading if
+  mistaken for live variance).
+CQ-07 [MINOR · perf design vs criterion] ws_stream.STREAM_INTERVAL = 0.25s → 4fps max.
+  Plan success criterion #2 claims 30fps realtime. The architecture never approaches
+  30fps; the criterion is aspirational, not enforced. (Verified empirically in F3.)
+CQ-08 [MINOR · amount validation] payment.py accepts negative/zero/arbitrary amounts
+  (`request.amount or random…` with no lower-bound check); a client can post amount=-5
+  and get "completed". Not a security issue (simulation) but unmarshaled input.
+CQ-09 [MINOR · lint/format tooling absent] No ESLint/Prettier config or dependency in
+  frontend (F2's brief lists ESLint/Prettier 정검). Type checking is strict and passing,
+  but formatting/CI lint gates are absent.
+CQ-10 [INFO · api models drifted from actual models] detection.py uses ONNXDetector's
+  COCO classes (car, person, traffic light, stop sign, …) while mock qwen/petriert
+  simulates "pedestrian" / "traffic_sign" class names — the WS pipeline maps real COCO
+  classes, but /api/qwen's situation logic only looks at "pedestrian"/"traffic_sign"
+  strings, which real ONNX never emits (it emits "person"/"traffic light"). Situation
+  chips via REST path are therefore always normal_driving with real models.
+CQ-11 [INFO · ws frame_id shadowing] ws.py `frame_id` increments but the field serves
+  no consumer; harmless.
+CQ-12 [INFO · positive control] Type safety is exemplary: strict TS, no `as any`, no
+  suppression comments, noFallthroughCasesInSwitch, pure-typed Pydantic request models.
+
+STRENGTHS
+---------
+- TypeScript strict-mode clean; py_compile clean; build green.
+- Clean module boundaries; lazy model loading with graceful mock fallback in every layer.
+- Colab bridge is a well-isolated transport with cached narration (no WS blocking).
+- No secrets, no tokens, no API keys in repo; .env.example has no real values.
+
+VERDICT: CODE QUALITY — APPROVE (2 majors worth fixing, no blocking defects)
+  - Type safety / build hygiene: PASS.
+  - Error handling: PARTIAL (misleading 200s CQ-01, silent WS swallow CQ-02 — recommend
+    fixing before handing to other consumers; demo functionality unaffected).
+  - Test coverage: FAIL per plan (zero tests) — flagged for user awareness, not blocking
+    the demo deliverable itself.

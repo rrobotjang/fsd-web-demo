@@ -1,0 +1,100 @@
+{
+  "qa1": {
+    "detect": {
+      "status": 200,
+      "count": 1,
+      "classes": [
+        "person"
+      ]
+    },
+    "lane": {
+      "status": 200,
+      "count": 1
+    }
+  },
+  "qa2": {
+    "first_frame_ms": 5,
+    "narration_updated": true
+  },
+  "qa3": {
+    "per_scenario": {
+      "Toll Gate": {
+        "before": 3,
+        "after": 4,
+        "ok": true
+      },
+      "Parking": {
+        "before": 4,
+        "after": 5,
+        "ok": true
+      },
+      "Fuel Station": {
+        "before": 5,
+        "after": 6,
+        "ok": true
+      }
+    },
+    "total": 6,
+    "scenarios": [
+      "toll",
+      "parking",
+      "fuel",
+      "toll",
+      "parking",
+      "fuel"
+    ]
+  },
+  "qa3b": {},
+  "qa4": {
+    "timerReached": 90,
+    "reached_90s": true,
+    "auto_stopped": true,
+    "destination_shown": true
+  },
+  "ws_probe": {
+    "frames": 6,
+    "intervalsMs": [
+      534,
+      792,
+      1054,
+      822,
+      586
+    ],
+    "errors": [
+      "ws-error"
+    ],
+    "avg_interval_ms": 758,
+    "est_fps": 1.3
+  },
+  "steps": [
+    {
+      "name": "qa2-streaming",
+      "ok": true,
+      "first_frame_ms": 5
+    },
+    {
+      "name": "qa3-payments",
+      "ok": true,
+      "total": 6
+    },
+    {
+      "name": "qa3b-ws-rate",
+      "ok": true,
+      "frames": 6,
+      "est_fps": 1.3
+    },
+    {
+      "name": "qa1-inference",
+      "ok": true,
+      "detect": 1,
+      "lane": 1
+    },
+    {
+      "name": "qa4-90s",
+      "ok": true,
+      "timerReached": 90,
+      "auto_stopped": true
+    }
+  ],
+  "errors": []
+}

@@ -1,0 +1,59 @@
+F5 Upgraded Demo Recording + Scene Clips
+=========================================
+Plan: /Users/robotjang/.omo/plans/fsd-web-demo.md
+Date: 2026-09-12 21:33 KST
+Status: COMPLETE
+Prerequisite: Qwen3-VL-4B + vLLM upgrade (all 4 upgrade todos DONE, verified)
+
+What this evidence covers
+-------------------------
+After the Qwen3-VL-4B upgrade was verified end-to-end
+(train loss 0.7765 -> fp16 merge -> vLLM daemon -> /api/qwen real narration),
+recorded a FRESH 90-second demo run so the narration heard is the REAL
+fine-tuned multimodal model (per user directive: "not yet because not
+connected vllm daemon" — the daemon is now connected).
+
+Recording driver
+----------------
+.omo/evidence/F5-record-driver.js  (Playwright, headless chromium, 1440x900,
+  recordVideo to video_canon/, collects live narration samples, runs full 90s)
+Source recording: .omo/evidence/video_canon/page@6753e71e8ced015b6a23f9070e3693fc.webm (92s)
+
+Driver results (F5-record-result.json)
+--------------------------------------
+- narration situations observed live: normal_driving, pedestrian_warning
+- timer: reached 90s / 90s, auto-stopped, Destination phase shown
+- zero console/page errors
+
+WS narration proof (real model, same path the demo UI uses)
+-----------------------------------------------------------
+backend/ws_stream probe against ws://localhost:8000/ws/stream returned:
+  [normal_driving]    "The road is clear and well-marked, with the drivable
+                       area detected. No vehicles or pedestrians detected.
+                       Continue at current speed."
+  [pedestrian_warning] (same body, detected-person variant)
+- Text matches the fine-tuned Qwen3-VL-4B style (bridge health_check=True;
+  mock never engaged — mock text is the static "Waiting for AI analysis" set).
+
+Scene clips (ffmpeg from the 92s source, h264 1440x900, faststart)
+-----------------------------------------------------------------
+.omo/evidence/clips/
+  01_normal_driving.mp4   30s   (0-30s   general driving, detection streaming)
+  02_toll_gate.mp4        15s   (30-45s  toll gate approach -> payment sim)
+  03_parking.mp4          15s   (45-60s  parking approach -> parking payment)
+  04_fuel_station.mp4     15s   (60-75s  fuel station -> fuel payment)
+  05_destination.mp4      17s   (75-92s  destination -> Qwen summary)
+  qa-01-normal-driving.png   QA frame @ 15s of clip 01
+  qa-05-destination.png      QA frame @ 8s  of clip 05 (both 1440x900)
+
+Related evidence (prior wave)
+-----------------------------
+F1-plan-compliance.txt, F2-code-quality.txt, F3-qa-report.txt,
+F3-qa-recording.mp4 (92.5s, pre-upgrade run), F4-scope-fidelity.txt
+
+Open notes
+----------
+- ws_stream STREAM_INTERVAL = 0.25s -> ~2-4 fps streaming throughput
+  (design-by-flow; 30fps plan criterion remains UNMET, unchanged from F3).
+- Live services unchanged: backend uvicorn :8000 (pid 84363), frontend :5173.
+- Colab T4 session 'lora-train' and vLLM daemon stay up (billing on user quota).

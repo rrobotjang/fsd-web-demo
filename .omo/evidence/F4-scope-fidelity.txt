@@ -1,0 +1,52 @@
+F4 SCOPE FIDELITY AUDIT — fsd-web-demo
+======================================
+Date: 2026-09-12
+Plan: Must have (5) / Must NOT have (8) guardrails from fsd-web-demo.md lines 37-74
+
+MUST NOT HAVE (guardrails)
+--------------------------
+| # | Guardrail                                | Status | Evidence |
+|---|------------------------------------------|--------|----------|
+| 1 | 실제 자율주행 제어 (조향/가속/제동)        | PASS   | No steering/throttle/brake output anywhere; system emits detection/lane/narration only |
+| 2 | 실제 결제 처리 (PG사 연동, 카드 등록)      | PASS   | payment.py is in-memory simulation; amounts randomized; no PG SDK, no card fields |
+| 3 | 사용자 인증/로그인                         | PASS   | No auth middleware, login routes, tokens, or session code |
+| 4 | 멀티유저 지원                              | PASS   | ws.py is single-client; no broadcast (plan explicitly requires single) |
+| 5 | 모바일 네이티브 앱                         | PASS   | Web-only React SPA; no React Native/Flutter/iOS/Android projects |
+| 6 | 서버 배포/클라우드 인프라                  | PASS   | No Dockerfile, no k8s, no cloud configs, no CI deploy pipelines. Colab bridge is a compute provider, not app infrastructure |
+| 7 | 모델 학습 코드 (추론만)                    | WARN   | Running service path is inference-only. HOWEVER colab/ contains training material: 01_lane_detection.ipynb (PyTorch training script with optim/DataLoader/nn — notebook file is actually a .py script), train_lane.py, train_detection.py, lora_train.py, retrain_lane.py, quantize_lane.py. These are source-of-model artifacts (how lane/seg ONNX were produced), colocated in-repo but never executed by backend/frontend runtime |
+| 8 | 복잡한 에러 핸들링/로깅                    | PASS   | Simple try/except with fallback; no logging framework, no observability stack — consistent with guardrail (see F2 CQ-01/02 for quality consequence) |
+
+MUST HAVE (1-5)
+---------------
+| # | Requirement                            | Status | Evidence |
+|---|----------------------------------------|--------|----------|
+| 1 | FSD 추론: Detection (YOLOv8/RetinaNet) | PASS   | models/yolov8n.onnx + ONNXDetector (COCO 80, NMS, FSD class filter) |
+| 1 | Lane Detection (U-Net segmentation)    | PASS   | models/lane.onnx + lane_int8_qdq.onnx + ONNXLaneDetector (contour → polygon) |
+| 1 | Path Planning (감지 기반 주행 경로)     | PARTIAL| `_situation()` in ws_stream.py classifies normal/pedestrian_warning/traffic_sign_detected from detections — decision-level output exists; NO explicit route/path geometry module (PathPlanner.tsx planned but absent — see F1 CF) |
+| 2 | Qwen 2.5 multimodal (영상+감지 주입)   | PASS   | colab_qwen_bridge: image b64 + _facts_prompt(detections, lanes) → qwen2.5-vl-3b conversation; mock fallback |
+| 2 | 주행 상황 추론 + 자연어 설명           | PASS   | 2-sentence narration; situation + confidence surfaced to QwenPanel |
+| 3 | 인카 결제: toll/parking/fuel + 이력    | PASS   | payment.py 3 scenarios + in-memory history; PaymentSimulator UI |
+| 4 | 실시간 영상 + bbox overlay             | PASS   | DrivingView canvas (frame b64 + CLASS_COLORS bbox + labels) |
+| 4 | 차선 시각화                            | PASS   | LaneOverlay canvas polylines (RGB per lane) + toggle |
+| 4 | 주행 경로 표시                         | FAIL   | No path display component exists (PathPlanner.tsx absent; no equivalent) |
+| 4 | Qwen 추론 패널                        | PASS   | QwenPanel (narration/situation/confidence, color-coded) |
+| 4 | 결제 시뮬레이션 UI                    | PASS   | PaymentSimulator (scenario select → Pay → history) |
+| 5 | KITTI 영상 로드 및 전처리             | PASS   | kitti_loader.py + 20 embedded KITTI frames ran через WS pipeline in F3 |
+
+SCOPE DRIFT SUMMARY
+-------------------
+1. colab/ training artifacts live in-repo (guardrail #7 WARN): repository contains model
+   TRAINING code (notebooks + scripts), though the runtime path never executes it. This
+   is exactly the ambiguity "모델 학습 코드 (추론만)" was meant to prevent at app scope;
+   colab/ is the provenance directory, not app code. Documented as scope note, not failure.
+2. "주행 경로 표시" (Must-have #4) is the ONE genuinely unmet product promise: no path
+   planning visualization. Mitigation: situation classification provides driving
+   decision context in text form via Qwen narrative.
+3. No out-of-scope features detected anywhere else (auth, PG, deploy infra, training at
+   runtime — all absent). Guardrail discipline otherwise exemplary.
+
+VERDICT: SCOPE FIDELITY — APPROVE WITH 1 DOCUMENTED GAP + 1 WARN
+  - 8/8 guardrails: 7 PASS, 1 WARN (colab/ model-training source present, not runtime)
+  - 5/5 must-have groups: present at functional level except "주행 경로 표시" (FAIL)
+    — decision/situation output exists in its place.
+  - No guardrail violations in executable application code.
