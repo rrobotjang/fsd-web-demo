@@ -76,12 +76,19 @@ export default function Dashboard() {
     timeElapsed: 0,
     phase: 'normal'
   })
-  
+  const [cameraMode, setCameraMode] = useState(false)
+  const [cameraActive, setCameraActive] = useState(false)
+  const [cameraError, setCameraError] = useState('')
+
   const wsRef = useRef<WebSocket | null>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const autoPaymentPhaseRef = useRef<DemoState['phase'] | null>(null)
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null)
   const lastSpokenNarrationRef = useRef('')
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const camStreamRef = useRef<MediaStream | null>(null)
+  const captureTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const pendingCaptureRef = useRef(false)
 
   const ttsSupported = typeof window !== 'undefined' && 'speechSynthesis' in window
   const sttSupported = typeof window !== 'undefined' && (
@@ -98,6 +105,69 @@ export default function Dashboard() {
     window.speechSynthesis.speak(utterance)
   }, [])
 
+  useEffect(() => {
+    if (!cameraActive || !videoRef.current || !camStreamRef.current) return
+    videoRef.current.srcObject = camStreamRef.current
+    void videoRef.current.play().catch(() => setCameraError('Camera preview could not start.'))
+  }, [cameraActive])
+
+  const toggleCamera = useCallback(async () => {
+    if (cameraMode) {
+      if (captureTimerRef.current) {
+        clearInterval(captureTimerRef.current)
+        captureTimerRef.current = null
+      }
+      camStreamRef.current?.getTracks().forEach(track => track.stop())
+      camStreamRef.current = null
+      if (videoRef.current) videoRef.current.srcObject = null
+      pendingCaptureRef.current = false
+      setCameraActive(false)
+      setCameraMode(false)
+      return
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setCameraError('Camera API is not available in this browser. Use Chrome or Edge.')
+      return
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 640 }, height: { ideal: 480 } }
+      })
+      camStreamRef.current = stream
+      setCameraError('')
+      setCameraActive(true)
+      setCameraMode(true)
+    } catch (error) {
+      const name = error instanceof DOMException ? error.name : ''
+      if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+        setCameraError('Camera blocked. Allow camera access for localhost, then try again.')
+      } else if (name === 'NotFoundError' || name === 'OverconstrainedError') {
+        setCameraError('No camera was found. Connect a webcam and try again.')
+      } else {
+        setCameraError(`Camera could not be opened: ${name || 'unknown error'}.`)
+      }
+    }
+  }, [cameraMode])
+
+  const startCaptureLoop = useCallback((ws: WebSocket) => {
+    if (captureTimerRef.current) clearInterval(captureTimerRef.current)
+    pendingCaptureRef.current = false
+    captureTimerRef.current = setInterval(() => {
+      const video = videoRef.current
+      if (!video || video.readyState < 2 || ws.readyState !== WebSocket.OPEN) return
+      if (pendingCaptureRef.current) return
+      const canvas = document.createElement('canvas')
+      canvas.width = 640
+      canvas.height = 480
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
+      ctx.drawImage(video, 0, 0, 640, 480)
+      const jpeg = canvas.toDataURL('image/jpeg', 0.8)
+      pendingCaptureRef.current = true
+      ws.send(JSON.stringify({ image: jpeg.split(',')[1] }))
+    }, 250)
+  }, [])
+
   const handleVoiceCommand = useCallback((transcript: string) => {
     const command = transcript.toLowerCase()
     if (command.includes('start') || command.includes('begin')) {
@@ -112,7 +182,7 @@ export default function Dashboard() {
     } else {
       setVoiceStatus(`Heard: "${transcript}". Try start, stop, or toggle lanes.`)
     }
-  }, [demoState.isRunning])
+  }, [demoState.isRunning, cameraMode])
 
   const toggleListening = useCallback(async () => {
     if (isListening) {
@@ -181,10 +251,13 @@ export default function Dashboard() {
     
     ws.onopen = () => {
       console.log('WebSocket connected')
-      ws.send(JSON.stringify({ start: true }))
+      if (!cameraMode) {
+        ws.send(JSON.stringify({ start: true }))
+      }
     }
     
     ws.onmessage = (event) => {
+      pendingCaptureRef.current = false
       try {
         const data = JSON.parse(event.data)
         setDetections(data.detections || [])
@@ -208,10 +281,14 @@ export default function Dashboard() {
     
     wsRef.current = ws
     return ws
-  }, [])
+  }, [cameraMode])
 
   const startDemo = () => {
     const ws = connectWebSocket()
+    
+    if (cameraMode) {
+      startCaptureLoop(ws)
+    }
     
     setDemoState({
       isRunning: true,
@@ -243,6 +320,11 @@ export default function Dashboard() {
 
   const stopDemo = () => {
     if (timerRef.current) clearInterval(timerRef.current)
+    if (captureTimerRef.current) {
+      clearInterval(captureTimerRef.current)
+      captureTimerRef.current = null
+    }
+    pendingCaptureRef.current = false
     if (wsRef.current) wsRef.current.close()
     
     setDemoState({
@@ -261,6 +343,8 @@ export default function Dashboard() {
   useEffect(() => () => {
     recognitionRef.current?.stop()
     window.speechSynthesis?.cancel()
+    if (captureTimerRef.current) clearInterval(captureTimerRef.current)
+    camStreamRef.current?.getTracks().forEach(track => track.stop())
   }, [])
 
   const handlePayment = async (scenario: string) => {
@@ -313,6 +397,24 @@ export default function Dashboard() {
             <span className="text-gray-400">
               {demoState.timeElapsed}s / 90s
             </span>
+            {cameraActive && (
+              <video
+                ref={videoRef}
+                playsInline
+                muted
+                className="w-28 h-24 rounded-lg border border-gray-700 object-cover bg-black"
+              />
+            )}
+            <button
+              onClick={toggleCamera}
+              className={`px-4 py-2 rounded-lg font-bold ${
+                cameraMode
+                  ? 'bg-gray-600 hover:bg-gray-700'
+                  : 'bg-indigo-600 hover:bg-indigo-700'
+              }`}
+            >
+              {cameraMode ? 'Stop Camera' : 'Use Camera'}
+            </button>
             <button
               onClick={demoState.isRunning ? stopDemo : startDemo}
               className={`px-6 py-2 rounded-lg font-bold ${
@@ -328,9 +430,17 @@ export default function Dashboard() {
 
         <div className="mb-4 bg-gray-800 rounded-lg p-3">
           <div className="flex justify-between text-sm mb-2">
-            <span>{currentPhase?.label || 'Ready'}</span>
+            <span>
+              {currentPhase?.label || 'Ready'}
+              <span className="ml-2 text-xs text-gray-400">
+                Source: {cameraMode ? 'Webcam' : 'Demo'}
+              </span>
+            </span>
             <span>{Math.round(progress)}%</span>
           </div>
+          {cameraError && (
+            <div className="mt-2 text-red-400 text-sm">{cameraError}</div>
+          )}
           <div className="w-full bg-gray-700 rounded-full h-2">
             <div
               className="bg-blue-500 h-2 rounded-full transition-all"
