@@ -39,6 +39,10 @@ QWEN_TEMPERATURE = float(os.getenv("QWEN_TEMPERATURE", "0.9"))
 QWEN_REROLL_TEMPERATURE = float(os.getenv("QWEN_REROLL_TEMPERATURE", "1.0"))
 QWEN_FREQUENCY_PENALTY = float(os.getenv("QWEN_FREQUENCY_PENALTY", "1.0"))
 QWEN_HTTP_TIMEOUT = int(os.getenv("QWEN_HTTP_TIMEOUT", "100"))
+# A pedestrian narration stays "pinned" this many seconds after generation so
+# pedestrian_warning frames keep showing a matching narration while the model
+# catches up (inference is ~6s, pedestrians blink by in <1s of demo frames).
+QWEN_PED_HOLD = float(os.getenv("QWEN_PED_HOLD", "8.0"))
 
 # Rotated per call to break the fixed-metalanguage monotony the model memorized
 # from a homogeneous fine-tune set. Each template still enforces the 2-sentence
@@ -106,6 +110,10 @@ class ColabQwenBridge:
         self._narration = "Vision narrator: connecting to vLLM daemon..."
         self._last_success = 0.0
         self._last_attempt = 0.0
+        self._ped_pending = False
+        self._ped_scene = None
+        self._ped_narration = None
+        self._ped_pin_until = 0.0
         self._stop = False
         self._thread = threading.Thread(target=self._worker, daemon=True, name="colab-qwen")
         self._thread.start()
@@ -115,8 +123,17 @@ class ColabQwenBridge:
                            lanes: List = None) -> str:
         """Streaming mode: stash the latest scene, return cached narration synchronously."""
         b64 = _image_to_jpeg_b64(image)
+        now = time.time()
         with self._lock:
-            self._latest_scene = (b64, detections or [], lanes or [])
+            scene = (b64, detections or [], lanes or [])
+            self._latest_scene = scene
+            has_ped = any(d.get("class") in ("person", "pedestrian")
+                          for d in (detections or []))
+            if has_ped:
+                self._ped_pending = True
+                self._ped_scene = scene
+                if self._ped_narration and now < self._ped_pin_until:
+                    return self._ped_narration
             return self._narration
 
     def infer_once(self, image, detections: List[Dict] = None,
@@ -147,10 +164,17 @@ class ColabQwenBridge:
             time.sleep(0.5)
             now = time.time()
             with self._lock:
-                scene = self._latest_scene
+                is_ped = self._ped_pending
+                if is_ped:
+                    scene = self._ped_scene or self._latest_scene
+                    self._ped_pending = False
+                else:
+                    scene = self._latest_scene
+                    if scene is None:
+                        continue
+                    if now - self._last_attempt < QWEN_INTERVAL:
+                        continue
                 if scene is None:
-                    continue
-                if now - self._last_attempt < QWEN_INTERVAL:
                     continue
                 b64, detections, lanes = scene
                 self._last_attempt = now
@@ -164,6 +188,10 @@ class ColabQwenBridge:
                 with self._lock:
                     self._narration = narration
                     self._last_success = time.time()
+                    if is_ped or any(d.get("class") in ("person", "pedestrian")
+                                     for d in (detections or [])):
+                        self._ped_narration = narration
+                        self._ped_pin_until = time.time() + QWEN_PED_HOLD
 
     def _request_narration(self, image_b64: str, detections: List[Dict],
                            lanes: List, timeout: int,
